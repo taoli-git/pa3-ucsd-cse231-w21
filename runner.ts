@@ -5,7 +5,7 @@
 
 import wabt from 'wabt';
 import * as compiler from './compiler';
-import {parse} from './parser';
+import {parseProgram} from './parser';
 
 // NOTE(joe): This is a hack to get the CLI Repl to run. WABT registers a global
 // uncaught exn handler, and this is not allowed when running the REPL
@@ -21,28 +21,67 @@ if(typeof process !== "undefined") {
   };
 }
 
-export async function run(source : string, config: any) : Promise<number> {
+export async function run(source : string, config: any) : Promise<[any, compiler.GlobalEnv]> {
   const wabtInterface = await wabt();
-  const parsed = parse(source);
+  const [parsed_defs, parsed_stmts] = parseProgram(source);
   var returnType = "";
-  var returnExpr = "";
-  const lastExpr = parsed[parsed.length - 1]
-  if(lastExpr.tag === "expr") {
-    returnType = "(result i32)";
-    returnExpr = "(local.get $$last)"
+  var returnVal = "";
+  console.log("source: " + source);
+  console.log("len "+parsed_defs.length);
+  console.log("len "+parsed_stmts.length);
+  if (parsed_stmts.length > 0 ){
+    var laststmt = parsed_stmts[parsed_stmts.length - 1];
+    if( laststmt.tag == "expr" || laststmt.tag == "logical" || laststmt.tag == "while") {
+      returnType = "(result i64)";
+      returnVal = "(local.get $$None)"
+    }
   }
-  const compiled = compiler.compile(source);
+  const compiled = compiler.compile(source, config.env);
   const importObject = config.importObject;
+  if(!importObject.js) {
+    const memory = new WebAssembly.Memory({initial:10, maximum:100});
+    importObject.js = { memory: memory };
+  }
   const wasmSource = `(module
-    (func $print (import "imports" "print") (param i32) (result i32))
+    (func $print (import "imports" "imported_func") (param i64))
+    (import "js" "memory" (memory 1))
+    ${compiled.funcs} 
     (func (export "exported_func") ${returnType}
-      ${compiled.wasmSource}
-      ${returnExpr}
+      ${compiled.wasmSource} 
+      ${returnVal}
     )
   )`;
+  console.log(wasmSource);
   const myModule = wabtInterface.parseWat("test.wat", wasmSource);
   var asBinary = myModule.toBinary({});
   var wasmModule = await WebAssembly.instantiate(asBinary.buffer, importObject);
   const result = (wasmModule.instance.exports.exported_func as any)();
-  return result;
+  var converted = convert(result);
+  return [converted, compiled.newEnv];
+}
+
+
+export function convert(arg: any){
+  if (arg == null) {
+    return arg;
+  }
+  var temp = BigInt.asIntN(64, arg);
+  var high = Number(BigInt.asIntN(32, temp / BigInt(1n << 40n)));
+  console.log("high: ",high);
+  var low = Number(BigInt.asIntN(32, temp & ((1n << 40n) - 1n)));
+  console.log("low: ",low)
+  if (high > 1) {
+    arg = null;
+  }
+  else if (high == 1) {
+    if (low){
+      arg = true;
+    } else {
+      arg = false;
+    }   
+  } 
+  else {
+    arg = Number(BigInt.asIntN(32, arg));
+  }
+  return arg;
 }
