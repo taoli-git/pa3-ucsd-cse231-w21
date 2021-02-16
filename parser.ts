@@ -298,10 +298,34 @@ export function traverseStmt(s : string, t : TreeCursor) : Stmt<any> {
     case "ExpressionStatement":
       t.firstChild(); // The child is some kind of expression, the
                       // ExpressionStatement is just a wrapper with no information
-      var expr = traverseExpr(s, t);
-      t.parent();
-      return { tag: "expr", expr: expr };
-
+      let childName = t.node.type.name;
+      if((childName as any) === "CallExpression") { // Note(Joe): hacking around typescript here; it doesn't know about state
+        t.firstChild();
+        const callName = s.substring(t.from, t.to);
+        if (callName === "print") {
+          t.nextSibling(); // go to arglist
+          t.firstChild(); // go into arglist
+          t.nextSibling(); // find single argument in arglist
+          const arg = traverseExpr(s, t);
+          t.parent(); // pop arglist
+          t.parent(); // pop expressionstmt
+          t.parent(); // pop callexpression
+          t.parent(); // pop expressionstatement
+          return {
+            tag: "print",
+            // LOL TODO: not this
+            value: arg
+          };
+        } 
+        else {
+          const expr = traverseExpr(s, t);
+          t.parent(); // pop going into stmt
+          return {
+            tag: "expr",
+            expr: expr
+          }
+        }
+      }
   }
 }
 

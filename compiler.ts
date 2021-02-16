@@ -1,7 +1,9 @@
 import { stringInput } from "lezer-tree";
+import { ClassificationType } from "typescript";
 import { Func_def, Var_def, Stmt, Expr, Binop, Uniop, Type, Typed_var, Class_def, Literal } from "./ast";
 import { getLiteralType, parseProgram } from "./parser";
 import { tcDef, tcExpr, tcStmt } from "./typecheck";
+import { BOOL, CLASS, NONE, NUM } from "./utils";
 
 // https://learnxinyminutes.com/docs/wasm/
 
@@ -303,6 +305,23 @@ function codeGenStmt(stmt: Stmt<Type>, env: GlobalEnv, local: Set<string>) : Arr
       return [`(block (loop`].concat([`(br_if 1 (i32.wrap_i64`], expr, [`))`], bodys, [`(br 0) ) )`]);
     case "pass":
       return [`nop`];
+    case "print":
+      var valStmts = codeGenExpr(stmt.value, env, local);
+      switch(stmt.a.tag) {
+        case "number":
+        case "class":
+          return valStmts.concat([
+            "(call $print)"
+          ]); 
+        case "bool":
+          return [`(i32.wrap_i64` ].concat(valStmts).concat([
+            ") (call $print_bool)"
+          ]);   
+        case "none":
+          return valStmts.concat([
+            "(call $print_none)"
+          ]); 
+      }
     case "return":
       var valStmts = codeGenExpr(stmt.value, env, local);
       valStmts.push("return");

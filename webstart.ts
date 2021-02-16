@@ -1,6 +1,5 @@
 import {BasicREPL} from './repl';
 import {emptyEnv, GlobalEnv} from './compiler';
-import {convert} from './runner';
 import { output } from './webpack.config';
 import { BOOL, NONE, NUM } from './utils';
 import { Type } from './ast';
@@ -24,13 +23,7 @@ function webStart() {
       console.log("Logging from WASM: ", arg);
       const elt = document.createElement("pre");
       document.getElementById("output").appendChild(elt);
-      arg = convert(arg);
-      if (arg == null){
-        throw new Error("Invalid argument\nExited with error code 1");
-      }
-      elt.innerText = toString(arg);
-      
-      //elt.innerText = stringify(typ, arg);
+      elt.innerText = stringify(typ, arg);
       return arg;
     }
 

@@ -21,6 +21,7 @@ export type Stmt<A> =
   | { a?: A, tag: "if", cond: Expr<A>, thn: Array<Stmt<A>>, els: Array<Stmt<A>> }
   | { a?: A, tag: "while", expr: Expr<A>, body: Array<Stmt<A>> }
   | { a?: A, tag: "pass" }
+  | { a?: A, tag: "print", value: Expr<A> }
   | { a?: A, tag: "return", value: Expr<A> }
   | { a?: A, tag: "expr", expr: Expr<A> }
 
