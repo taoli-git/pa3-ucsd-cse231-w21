@@ -2,7 +2,7 @@ import { stringInput } from "lezer-tree";
 import { ClassificationType } from "typescript";
 import { Func_def, Var_def, Stmt, Expr, Binop, Uniop, Type, Typed_var, Class_def, Literal } from "./ast";
 import { getLiteralType, parseProgram } from "./parser";
-import { tcDef, tcExpr, tcStmt } from "./typecheck";
+import { tcStmts, tcDefs, tcExpr } from "./typecheck";
 import { BOOL, CLASS, NONE, NUM } from "./utils";
 
 // https://learnxinyminutes.com/docs/wasm/
@@ -39,7 +39,7 @@ const Func_param : Map<string, Array<Type>> = new Map();
 const Global_type: Map<string, Type> = new Map();
 
 
-export function augmentEnv(env: GlobalEnv, defs: Array<Var_def | Class_def>) : GlobalEnv {
+export function augmentEnv(env: GlobalEnv, defs: Array<Var_def | Class_def<any>>) : GlobalEnv {
   const newEnv = new Map(env.globals);
   const newClasses = new Map(env.classes);
   const newDefault = new Map(env.default);
@@ -132,13 +132,16 @@ export function compile(source: string, env: GlobalEnv) : CompileResult {
   console.log(ast_defs);
   console.log(ast_stmts);
   const withDefines = augmentEnv(env, ast_defs);
+  const typeddefs = tcDefs(ast_defs, withDefines.types);
+  console.log(typeddefs);
+  const typedAst = tcStmts(ast_stmts, withDefines.types);
   // do typecheck
 
   const localDefines = [`(local $$None i64) (i64.const ` + none_off + ") (local.set $$None)"];
   // func and var defines
   const defGroups: Array<Array<string>> = [];
   
-  for (var def of ast_defs) {
+  for (var def of typeddefs) {
     //tcDef(def, globalType, new Map());
     if (def.tag == "var"){
       defGroups.push(codeGenDef(def, withDefines, new Set()));
@@ -163,7 +166,7 @@ export function compile(source: string, env: GlobalEnv) : CompileResult {
 
   // all statements
   //ast_stmts.map(s => tcStmt(s, globalType, new Map(), null));
-  const commandGroups = ast_stmts.map((stmt) => codeGenStmt(stmt, withDefines, new Set()));
+  const commandGroups = typedAst.map((stmt) => codeGenStmt(stmt, withDefines, new Set()));
   
   var commands = [].concat.apply([], localDefines);
 
@@ -191,7 +194,7 @@ function envLookup(env : GlobalEnv, name : string) : number {
   return (env.globals.get(name) * 8); // 8-byte values
 }
 
-function codeGenDef(def: Var_def | Func_def, env: GlobalEnv, local: Set<string> ): Array<string> {
+function codeGenDef(def: Var_def | Func_def<Type>, env: GlobalEnv, local: Set<string> ): Array<string> {
   // tcDef(def, globalType, new Map());
   switch(def.tag) {
     case "var":
@@ -266,18 +269,20 @@ function codeGenDef(def: Var_def | Func_def, env: GlobalEnv, local: Set<string> 
 
 
 function codeGenStmt(stmt: Stmt<Type>, env: GlobalEnv, local: Set<string>) : Array<string> {
-  console.log("stmt" + local);
   switch(stmt.tag) {
     case "assign":
-      if (local.has(stmt.name)) {
-        var valStmts = codeGenExpr(stmt.value, env, local);
-        return valStmts.concat([`(local.set $${stmt.name})`]);
-      } 
-      else {
-        const locationToStore = [`(i32.const ${envLookup(env, stmt.name)}) ;; ${stmt.name}`];
-        var valStmts = codeGenExpr(stmt.value, env, local);
-        return locationToStore.concat(valStmts).concat([`(i64.store)`]);
-      }
+      const left = codeGenExpr(stmt.name, env, local);
+      var valStmts = codeGenExpr(stmt.value, env, local);
+      return left.concat(valStmts).concat([`(i64.store)`]);
+      // if (local.has(stmt.name)) {
+      //   var valStmts = codeGenExpr(stmt.value, env, local);
+      //   return valStmts.concat([`(local.set $${stmt.name})`]);
+      // } 
+      // else {
+      //   const locationToStore = [`(i32.const ${envLookup(env, stmt.name)}) ;; ${stmt.name}`];
+      //   var valStmts = codeGenExpr(stmt.value, env, local);
+      //   return locationToStore.concat(valStmts).concat([`(i64.store)`]);
+      // }
     case "if":
       var expr1 = codeGenExpr(stmt.cond, env, local);
       var result = [`(if (i32.wrap_i64 `].concat(expr1, [`)`]);

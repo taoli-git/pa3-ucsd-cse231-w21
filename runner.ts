@@ -34,7 +34,7 @@ export async function run(source : string, config: any) : Promise<[Value, compil
   if (parsed_stmts.length > 0 ){
     var laststmt = parsed_stmts[parsed_stmts.length - 1];
     if( laststmt.tag == "expr" || laststmt.tag == "if" || laststmt.tag == "while") {
-      returnType = "(result i32)";
+      returnType = "(result i64)";
       returnVal = "(local.get $$None)"
     }
   }
@@ -51,11 +51,11 @@ export async function run(source : string, config: any) : Promise<[Value, compil
   }
   elem += `)`;
   const wasmSource = `(module
-    (func $print (import "imports" "print") (param i32))
-    (func $print_bool (import "imports" "print_bool") (param i32))
-    (func $print_none (import "imports" "print_none") (param i32))
+    (func $print (import "imports" "print") (param i64))
+    (func $print_bool (import "imports" "print_bool") (param i64))
+    (func $print_none (import "imports" "print_none") (param i64))
     (import "js" "memory" (memory 1))
-    (type $return_i32 (func (result i32)))
+    (type $return_i64 (func (result i64)))
     ${funcTable}
     ${compiled.funcs}
     ${elem}
@@ -79,9 +79,9 @@ export function convert(arg: any){
     return arg;
   }
   var temp = BigInt.asIntN(64, arg);
-  var high = Number(temp / (1n << 29n));
+  var high = Number(BigInt.asIntN(32, temp / BigInt(1n << 40n)));
   console.log("high: ",high);
-  var low = Number(arg & ((1n << 29n) - 1n));
+  var low = Number(BigInt.asIntN(32, temp & ((1n << 40n) - 1n)));
   console.log("low: ",low)
   if (high > 1) {
     arg = null;
@@ -94,7 +94,7 @@ export function convert(arg: any){
     }   
   } 
   else {
-    arg = Number(arg);
+    arg = Number(BigInt.asIntN(32, arg));
   }
   return arg;
 }

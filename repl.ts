@@ -1,8 +1,9 @@
 import {run} from "./runner";
 import { parseProgram } from "./parser";
-import {emptyEnv, GlobalEnv, GlobalType} from "./compiler";
+import { augmentEnv, GlobalEnv } from "./compiler";
 import { Value, Type } from "./ast";
 import { NONE } from "./utils";
+import { tcStmts } from "./typecheck";
 
 interface REPL {
   run(source : string) : Promise<Value>;
@@ -41,7 +42,10 @@ export class BasicREPL {
     return result;
   }
   async tc(source : string) : Promise<Type> { 
-    const ast = parseProgram(source);
-    return NONE;
+    const [ast_defs, ast_stmts] = parseProgram(source);
+    if (ast_stmts.length == 0) return NONE;
+    var env = augmentEnv(this.currentEnv, ast_defs);
+    var typedAst = tcStmts(ast_stmts, env.types);
+    return typedAst[typedAst.length-1].a;
   } 
 }

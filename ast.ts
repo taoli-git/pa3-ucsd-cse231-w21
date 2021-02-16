@@ -1,8 +1,8 @@
-export type program =  
-  { def: Array<Var_def | Class_def>, body: Array<Stmt<any>> }
+export type program<A> =  
+  { def: Array<Var_def | Class_def<A>>, body: Array<Stmt<A>> }
 
-export type Class_def = 
-  { tag: "class", name: string, fields: Array<Var_def>, methods: Array<Func_def> }
+export type Class_def<A> = 
+  { tag: "class", name: string, fields: Array<Var_def>, methods: Array<Func_def<A>> }
 
 export type Var_def = 
   { tag: "var", typed_var: Typed_var,  literal: Literal}
@@ -10,14 +10,14 @@ export type Var_def =
 export type Typed_var = 
   { name: string, type: Type}
 
-export type Func_def = 
-  { tag: "func",  name: string, class: string, typed_var: Array<Typed_var>, type: Type, func_body: Func_body }
+export type Func_def<A> = 
+  { tag: "func",  name: string, class: string, typed_var: Array<Typed_var>, type: Type, func_body: Func_body<A> }
 
-export type Func_body = 
-  { var_def: Array<Var_def>, body: Array<Stmt<any>> }
+export type Func_body<A> = 
+  { var_def: Array<Var_def>, body: Array<Stmt<A>> }
 
 export type Stmt<A> = 
-    { a?: A, tag: "assign", name: string, value: Expr<A> }
+    { a?: A, tag: "assign", name: Expr<A> , value: Expr<A> }
   | { a?: A, tag: "if", cond: Expr<A>, thn: Array<Stmt<A>>, els: Array<Stmt<A>> }
   | { a?: A, tag: "while", expr: Expr<A>, body: Array<Stmt<A>> }
   | { a?: A, tag: "pass" }

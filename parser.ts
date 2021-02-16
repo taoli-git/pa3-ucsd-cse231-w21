@@ -5,7 +5,7 @@ import { BOOL, CLASS, NONE, NUM } from "./utils";
 
 const classes = new Set();
 
-export function parseProgram(source : string) : [Array<Var_def | Class_def>, Array<Stmt<any>>] {
+export function parseProgram(source : string) : [Array<Var_def | Class_def<any>>, Array<Stmt<any>>] {
   const t = parser.parse(source).cursor();
   t.firstChild();
   
@@ -17,7 +17,7 @@ export function parseProgram(source : string) : [Array<Var_def | Class_def>, Arr
   return [defs, stmts];
 }
 
-export function traverseDefs(s : string, t : TreeCursor) : [Array<Var_def | Class_def>, boolean]{
+export function traverseDefs(s : string, t : TreeCursor) : [Array<Var_def | Class_def<any>>, boolean]{
   const defs = [];
   var finish = false;
   while(true) {
@@ -50,7 +50,7 @@ export function traverseDefs(s : string, t : TreeCursor) : [Array<Var_def | Clas
   return [defs, finish];
 }
 
-export function traverseClassDefs(s : string, t : TreeCursor) : Class_def {
+export function traverseClassDefs(s : string, t : TreeCursor) : Class_def<any> {
   const varDefs = [];
   const funcDefs = [];
   t.firstChild();
@@ -101,7 +101,7 @@ export function traverseVarDef(s : string, t : TreeCursor) : Var_def {
   return { tag: "var", typed_var : {name, type}, literal };
 }
 
-export function traverseFuncDef(className: string, s : string, t : TreeCursor) : Func_def {
+export function traverseFuncDef(className: string, s : string, t : TreeCursor) : Func_def<any> {
   t.firstChild();  // Focus on def
   t.nextSibling(); // Focus on name of function
   var name = s.substring(t.from, t.to);
@@ -109,7 +109,7 @@ export function traverseFuncDef(className: string, s : string, t : TreeCursor) :
   var typed_vars = traverseParameters(s, t);
   t.nextSibling();
   // check if return type
-  var type = null;
+  var type = NONE;
   var temp = t;
   if ( temp.type.name == "TypeDef" ) {
     type = getType(s, t);
@@ -208,7 +208,6 @@ export function traverseStmts(s : string, t : TreeCursor) {
   // The top node in the program is a Script node with a list of children
   // that are various statements
   const stmts:Array<Stmt<any>> = [];
-  
   do {
     console.log(">>>>>" + t.type.name);
     var temp: Stmt<any> = traverseStmt(s, t);
@@ -224,7 +223,8 @@ export function traverseStmt(s : string, t : TreeCursor) : Stmt<any> {
   switch(t.type.name) {
     case "AssignStatement":
       t.firstChild(); // focused on name (the first child)
-      var name = s.substring(t.from, t.to);
+      var name = traverseExpr(s, t);
+      //s.substring(t.from, t.to);
       t.nextSibling(); // focused on = sign. May need this for complex tasks, like +=!
       t.nextSibling(); // focused on the value expression
 
@@ -306,19 +306,18 @@ export function traverseStmt(s : string, t : TreeCursor) : Stmt<any> {
           t.nextSibling(); // go to arglist
           t.firstChild(); // go into arglist
           t.nextSibling(); // find single argument in arglist
-          const arg = traverseExpr(s, t);
+          var arg = traverseExpr(s, t);
           t.parent(); // pop arglist
           t.parent(); // pop expressionstmt
           t.parent(); // pop callexpression
-          t.parent(); // pop expressionstatement
           return {
             tag: "print",
             // LOL TODO: not this
             value: arg
           };
-        } 
-        else {
-          const expr = traverseExpr(s, t);
+        } else {
+          t.parent(); // pop going into expr
+          var expr = traverseExpr(s, t);
           t.parent(); // pop going into stmt
           return {
             tag: "expr",
@@ -326,6 +325,15 @@ export function traverseStmt(s : string, t : TreeCursor) : Stmt<any> {
           }
         }
       }
+      else {
+        var expr = traverseExpr(s, t);
+        t.parent(); // pop going into stmt
+        return {
+          tag: "expr",
+          expr: expr
+        }
+      }
+      
   }
 }
 
