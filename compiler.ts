@@ -7,9 +7,6 @@ import { BOOL, CLASS, NONE, NUM } from "./utils";
 
 // https://learnxinyminutes.com/docs/wasm/
 
-const bool_off = BigInt.asIntN(64, 1n << 40n);
-const none_off = BigInt.asIntN(64, 1n << 41n);
-
 // Numbers are offsets into global memory
 export type GlobalEnv = {
   globals: Map<string, number>;
@@ -137,7 +134,7 @@ export function compile(source: string, env: GlobalEnv) : CompileResult {
   const typedAst = tcStmts(ast_stmts, withDefines.types);
   // do typecheck
 
-  const localDefines = [`(local $$None i64) (i64.const ` + none_off + ") (local.set $$None)"];
+  const localDefines = [`(local $$None i32) (i32.const 0 ) (local.set $$None)`];
   // func and var defines
   const defGroups: Array<Array<string>> = [];
   
@@ -148,7 +145,7 @@ export function compile(source: string, env: GlobalEnv) : CompileResult {
       defGroups.push([
         `(i32.const 0)`,             // Address for our upcoming store instruction
         `(i32.load (i32.const 0))`,  // Load the dynamic heap head offset
-        `(i32.add (i32.const 8))`,   // Move heap head beyond the two words we just created for fields
+        `(i32.add (i32.const 4))`,   // Move heap head beyond the two words we just created for fields
         `(i32.store)`]);
     }
     else if (def.tag == "class"){
@@ -191,7 +188,7 @@ function envLookup(env : GlobalEnv, name : string) : number {
   { console.log("Could not find " + name + " in ", env); 
     throw new Error("Not a variable: " + name);
   }
-  return (env.globals.get(name) * 8); // 8-byte values
+  return (env.globals.get(name) * 4); // 4-byte values
 }
 
 function codeGenDef(def: Var_def | Func_def<Type>, env: GlobalEnv, local: Set<string> ): Array<string> {
@@ -207,7 +204,7 @@ function codeGenDef(def: Var_def | Func_def<Type>, env: GlobalEnv, local: Set<st
       else {
         env.types.vars.set(name, def.typed_var.type);
         const locationToStore = [`(i32.const ${envLookup(env, name)}) ;; ${name}`];
-        return locationToStore.concat(valStmts).concat([`(i64.store)`]);
+        return locationToStore.concat(valStmts).concat([`(i32.store)`]);
       }
     case "func":     
       const localEnv:Set<string> = new Set();
@@ -229,18 +226,18 @@ function codeGenDef(def: Var_def | Func_def<Type>, env: GlobalEnv, local: Set<st
       
        // local vars
       var localdefs : Array<string> = []; 
-      localdefs.push(`(local $$None i64)`);
+      localdefs.push(`(local $$None i32)`);
 
       for (var temp of var_defs){
         if (localEnv.has(temp.typed_var.name)) {
           throw new Error("Duplicate declaration of identifier in same scope: "+ param.name);
         }
         localEnv.add(temp.typed_var.name);
-        localdefs.push(`(local $${temp.typed_var.name} i64)`);
+        localdefs.push(`(local $${temp.typed_var.name} i32)`);
       }
       console.log(localEnv);
 
-      var params = def.typed_var.map(p => `(param $${p.name} i64)`).join(" ");
+      var params = def.typed_var.map(p => `(param $${p.name} i32)`).join(" ");
       var localDefines = localdefs.join("\n");
       var localAssigns = var_defs.map(s=>codeGenDef(s, env, localEnv)).flat().join("\n");
       
@@ -254,13 +251,13 @@ function codeGenDef(def: Var_def | Func_def<Type>, env: GlobalEnv, local: Set<st
       var stmtsBody = stmts.flat().join("\n");
       var rettype = "";
       if (def.type != null) {
-        rettype = `(result i64)`;
+        rettype = `(result i32)`;
       }
 
       const funcName = def.class + "$" + def.name;
       var result = `(func $${funcName} ${params} ${rettype} 
          \n${localDefines} 
-         \n(local.set $$None (i64.const ${none_off}))\n ${localAssigns}
+         \n(local.set $$None (i32.const 0))\n ${localAssigns}
          ${stmtsBody})`;
       Funccode.set(def.name, result);
       return [result];
@@ -273,7 +270,7 @@ function codeGenStmt(stmt: Stmt<Type>, env: GlobalEnv, local: Set<string>) : Arr
     case "assign":
       const left = codeGenExpr(stmt.name, env, local);
       var valStmts = codeGenExpr(stmt.value, env, local);
-      return left.concat(valStmts).concat([`(i64.store)`]);
+      return left.concat(valStmts).concat([`(i32.store)`]);
       // if (local.has(stmt.name)) {
       //   var valStmts = codeGenExpr(stmt.value, env, local);
       //   return valStmts.concat([`(local.set $${stmt.name})`]);
@@ -281,11 +278,11 @@ function codeGenStmt(stmt: Stmt<Type>, env: GlobalEnv, local: Set<string>) : Arr
       // else {
       //   const locationToStore = [`(i32.const ${envLookup(env, stmt.name)}) ;; ${stmt.name}`];
       //   var valStmts = codeGenExpr(stmt.value, env, local);
-      //   return locationToStore.concat(valStmts).concat([`(i64.store)`]);
+      //   return locationToStore.concat(valStmts).concat([`(i32.store)`]);
       // }
     case "if":
       var expr1 = codeGenExpr(stmt.cond, env, local);
-      var result = [`(if (i32.wrap_i64 `].concat(expr1, [`)`]);
+      var result = [`(if `].concat(expr1);
       var body1 = [``];
       for (var body of stmt.thn) {
         body1 = body1.concat(codeGenStmt(body, env, local));
@@ -307,20 +304,20 @@ function codeGenStmt(stmt: Stmt<Type>, env: GlobalEnv, local: Set<string>) : Arr
       for (var body of stmt.body) {
         bodys = bodys.concat(codeGenStmt(body, env, local));
       }
-      return [`(block (loop`].concat([`(br_if 1 (i32.wrap_i64`], expr, [`))`], bodys, [`(br 0) ) )`]);
+      return [`(block (loop`].concat([`(br_if 1 `], expr, [`)`], bodys, [`(br 0) ) )`]);
     case "pass":
       return [`nop`];
     case "print":
       var valStmts = codeGenExpr(stmt.value, env, local);
-      switch(stmt.a.tag) {
+      switch(stmt.value.a.tag) {
         case "number":
         case "class":
           return valStmts.concat([
             "(call $print)"
           ]); 
         case "bool":
-          return [`(i32.wrap_i64` ].concat(valStmts).concat([
-            ") (call $print_bool)"
+          return valStmts.concat([
+            "(call $print_bool)"
           ]);   
         case "none":
           return valStmts.concat([
@@ -357,23 +354,23 @@ function codeGenExpr(expr : Expr<Type>, env: GlobalEnv, local: Set<string>) : Ar
       var new_expr = expr.value;
       switch(new_expr.tag) {
         case "None":
-          return ["(i64.const " + none_off + ")"];
+          return ["(i32.const " + 0 + ")"];
         case "Bool":
           if (new_expr.value) {
-            return ["(i64.const " + (bool_off+1n) + ")"];
+            return ["(i32.const " + 1 + ")"];
           }
           else {
-            return ["(i64.const " + bool_off + ")"];
+            return ["(i32.const " + 0 + ")"];
           }
         case "number":
-          return ["(i64.const " + new_expr.value + ")"];
+          return ["(i32.const " + new_expr.value + ")"];
       }
     case "id":
       if (local.has(expr.name)){
         return [`(local.get $${expr.name})`];
       }
       else{
-        return [`(i32.const ${envLookup(env, expr.name)})`, `(i64.load )`];
+        return [`(i32.const ${envLookup(env, expr.name)})`, `(i32.load )`];
       }
     case "lookup":
       console.log("Looking up ", expr, env);
@@ -386,8 +383,8 @@ function codeGenExpr(expr : Expr<Type>, env: GlobalEnv, local: Set<string>) : Ar
       let offset = env.classes.get(className).get(expr.name);
       return [
         ...objstmts,
-        `(i32.add (i32.const ${offset * 8}))`,
-        `(i64.load)`
+        `(i32.add (i32.const ${offset * 4}))`,
+        `(i32.load)`
       ];
     case "construct":
       // each time update obj and globals to record the offset for this obj
@@ -395,20 +392,20 @@ function codeGenExpr(expr : Expr<Type>, env: GlobalEnv, local: Set<string>) : Ar
       var var_index = env.classes.get(expr.name);
       var_index.forEach((value, key) => {
         ret.push("(i32.load (i32.const 0))");
-        ret.push(`(i32.add (i32.const ${value * 8}))`)
+        ret.push(`(i32.add (i32.const ${value * 4}))`)
         var dfval = env.default.get(expr.name).get(key);
         var dfexpr:Expr<Type> = { a: getLiteralType(dfval), tag: "literal", value: dfval }
         ret = ret.concat(codeGenExpr(dfexpr, env, local));
-        ret.push("(i64.store)");
+        ret.push("(i32.store)");
       })
       env.offset += var_index.size;
       return ret.concat([
         `(i32.const 0)`,             // Address for our upcoming store instruction
         `(i32.load (i32.const 0))`,  // Load the dynamic heap head offset
-        `(i32.add (i32.const ${var_index.size * 8}))`,   // Move heap head beyond the two words we just created for fields
+        `(i32.add (i32.const ${var_index.size * 4}))`,   // Move heap head beyond the two words we just created for fields
         `(i32.store)`,               // Save the new heap offset
         `(i32.load (i32.const 0))`,  // Reload the heap head ptr
-        `(i32.sub (i32.const ${var_index.size * 8}))`    // Subtract offset to get address for the object
+        `(i32.sub (i32.const ${var_index.size * 4}))`    // Subtract offset to get address for the object
       ]);
     case "methodcall":
       var argStmts =  codeGenExpr(expr.obj, env, local);
@@ -420,7 +417,7 @@ function codeGenExpr(expr : Expr<Type>, env: GlobalEnv, local: Set<string>) : Ar
         throw new Error("Report this as a bug to the compiler developer, this shouldn't happen " + objtype.tag);
       }
       var funcName = type.name + "$" + expr.name;
-      return argStmts.concat([`(call_indirect (type $return_i64) (i32.const ${env.tableIndex.get(funcName)}))`]);
+      return argStmts.concat([`(call_indirect (type $return_i32) (i32.const ${env.tableIndex.get(funcName)}))`]);
     case "uniop":
       return codeGenUniOp(expr.op, expr.right, env, local);
     case "binop":
@@ -442,11 +439,11 @@ function codeGenUniOp(op: Uniop, right: Expr<Type>, env: GlobalEnv, local: Set<s
   var left;
   switch (op) {
     case Uniop.Not:
-      left = ["(i64.const 1)"]; // -1 xor 
-      return left.concat(rightStmts.concat([`(i64.xor )`]));
+      left = ["(i32.const 1)"]; // -1 xor 
+      return left.concat(rightStmts.concat([`(i32.xor )`]));
     case Uniop.Negate:
-      left = ["(i64.const 0)"]; 
-      return left.concat(rightStmts.concat([`(i64.sub )`]));
+      left = ["(i32.const 0)"]; 
+      return left.concat(rightStmts.concat([`(i32.sub )`]));
   }
 }
 
@@ -455,41 +452,41 @@ function codeGenBinOp(op: Binop, left: Expr<Type>, right: Expr<Type>, env: Globa
   var rightStmts = codeGenExpr(right, env, local);
   switch (op) {
     case Binop.Plus:
-      return leftStmts.concat(rightStmts.concat([`(i64.add )`]));
+      return leftStmts.concat(rightStmts.concat([`(i32.add )`]));
     case Binop.Minus:
-      return leftStmts.concat(rightStmts.concat([`(i64.sub )`]));
+      return leftStmts.concat(rightStmts.concat([`(i32.sub )`]));
     case Binop.Multiply:
-      return leftStmts.concat(rightStmts.concat([`(i64.mul )`]));
+      return leftStmts.concat(rightStmts.concat([`(i32.mul )`]));
     case Binop.Divide:
       var result:Array<string> = [];
       result = result.concat(leftStmts);
-      result.push(`(f64.convert_i64_s )`);
+      result.push(`(f32.convert_i32_s )`);
       result = result.concat(rightStmts);
-      result.push(`(f64.convert_i64_s )`);
-      result.push(`(f64.div )`);
-      result.push(`(f64.floor )`);
-      result.push(`(i64.trunc_f64_s )`);
+      result.push(`(f32.convert_i32_s )`);
+      result.push(`(f32.div )`);
+      result.push(`(f32.floor )`);
+      result.push(`(i32.trunc_f32_s )`);
       return result;
-      // return leftStmts.concat(rightStmts.concat([`(i64.div_s )`]));
+      // return leftStmts.concat(rightStmts.concat([`(i32.div_s )`]));
     case Binop.Mod:
       var expr:Expr<Type> = { a: { tag: "number"}, tag: "binop", op: Binop.Minus, left: left, right: 
                       {a: { tag: "number"}, tag: "binop", op: Binop.Multiply, left: right, right:
                       {a: { tag: "number"}, tag: "binop", op: Binop.Divide, left: left, right: right}}};
       var result = codeGenExpr(expr, env, local);
       return result;
-      // return leftStmts.concat(rightStmts.concat([`(i64.rem_s )`]));
+      // return leftStmts.concat(rightStmts.concat([`(i32.rem_s )`]));
     case Binop.Equal:
-      return leftStmts.concat(rightStmts.concat([`(i64.eq )`])).concat(intToBool());
+      return leftStmts.concat(rightStmts.concat([`(i32.eq )`])).concat(intToBool());
     case Binop.Unequal:
-      return leftStmts.concat(rightStmts.concat([`(i64.ne )`])).concat(intToBool());
+      return leftStmts.concat(rightStmts.concat([`(i32.ne )`])).concat(intToBool());
     case Binop.LE:
-      return leftStmts.concat(rightStmts.concat([`(i64.le_s )`])).concat(intToBool());
+      return leftStmts.concat(rightStmts.concat([`(i32.le_s )`])).concat(intToBool());
     case Binop.GE:
-      return leftStmts.concat(rightStmts.concat([`(i64.ge_s )`])).concat(intToBool());
+      return leftStmts.concat(rightStmts.concat([`(i32.ge_s )`])).concat(intToBool());
     case Binop.LT:
-      return leftStmts.concat(rightStmts.concat([`(i64.lt_s )`])).concat(intToBool());
+      return leftStmts.concat(rightStmts.concat([`(i32.lt_s )`])).concat(intToBool());
     case Binop.GT:
-      return leftStmts.concat(rightStmts.concat([`(i64.gt_s )`])).concat(intToBool());
+      return leftStmts.concat(rightStmts.concat([`(i32.gt_s )`])).concat(intToBool());
     case Binop.Is:
       var result:Array<string> = [];
       // None
@@ -497,7 +494,7 @@ function codeGenBinOp(op: Binop, left: Expr<Type>, right: Expr<Type>, env: Globa
         result.push(`(i32.const 1)`);
       } 
       else {
-        result = leftStmts.concat(rightStmts.concat([`(i64.eq )`]));
+        result = leftStmts.concat(rightStmts.concat([`(i32.eq )`]));
       }
       return result.concat(intToBool());
   }
@@ -505,8 +502,8 @@ function codeGenBinOp(op: Binop, left: Expr<Type>, right: Expr<Type>, env: Globa
 
 function intToBool() : Array<string> {
   var result = [];
-  result.push(`(i64.extend_i32_s )`);
-  result.push(`(i64.const `+bool_off + `)`);
-  result.push(`(i64.add )`);
+  result.push(`(i32.extend_i32_s )`);
+  result.push(`(i32.const 0)`);
+  result.push(`(i32.add )`);
   return result;
 }
