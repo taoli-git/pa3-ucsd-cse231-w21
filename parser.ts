@@ -1,13 +1,16 @@
 import {parser} from "lezer-python";
 import {Tree, TreeCursor} from "lezer-tree";
 import {Var_def, Func_def, Typed_var, Expr, Stmt, Type, Literal, Map_uni, Map_bin, Class_def} from "./ast";
+import { BOOL, CLASS, NONE, NUM } from "./utils";
 
-export function parseProgram(source : string) : [Array<Var_def | Class_def>, Array<Stmt>] {
+const classes = new Set();
+
+export function parseProgram(source : string) : [Array<Var_def | Class_def>, Array<Stmt<any>>] {
   const t = parser.parse(source).cursor();
   t.firstChild();
   
   var [defs, finish] = traverseDefs(source, t);
-  var stmts = new Array<Stmt>();
+  var stmts = new Array<Stmt<any>>();
   if (!finish) {
     stmts = traverseStmts(source, t);
   }
@@ -53,9 +56,11 @@ export function traverseClassDefs(s : string, t : TreeCursor) : Class_def {
   t.firstChild();
   t.nextSibling(); // Focus on class name
   const className = s.substring(t.from, t.to);
+  classes.add(className);
   t.nextSibling(); // Focus on body
   t.firstChild();  // Focus colon
 
+  
   while(t.nextSibling()) {
     if (t.type.name == "FunctionDefinition") {
       funcDefs.push(traverseFuncDef(className, s, t));
@@ -163,7 +168,7 @@ export function traverseParameters(s : string, t : TreeCursor) : Array<Typed_var
   return params;
 }
 
-export function traverseFuncbody(s : string, t : TreeCursor) : [Array<Var_def>, Array<Stmt>] {
+export function traverseFuncbody(s : string, t : TreeCursor) : [Array<Var_def>, Array<Stmt<any>>] {
   const defs = [];
   var finish = false;
   while(true) {
@@ -192,7 +197,7 @@ export function traverseFuncbody(s : string, t : TreeCursor) : [Array<Var_def>, 
       break;
     }
   }
-  var stmts = new Array<Stmt>();
+  var stmts = new Array<Stmt<any>>();
   if (!finish) {
     stmts = traverseStmts(s, t);
   }
@@ -202,11 +207,11 @@ export function traverseFuncbody(s : string, t : TreeCursor) : [Array<Var_def>, 
 export function traverseStmts(s : string, t : TreeCursor) {
   // The top node in the program is a Script node with a list of children
   // that are various statements
-  const stmts:Array<Stmt> = [];
+  const stmts:Array<Stmt<any>> = [];
   
   do {
     console.log(">>>>>" + t.type.name);
-    var temp: Stmt = traverseStmt(s, t);
+    var temp: Stmt<any> = traverseStmt(s, t);
     if (temp != null){
       stmts.push(temp);
     }
@@ -215,7 +220,7 @@ export function traverseStmts(s : string, t : TreeCursor) {
   return stmts;
 }
 
-export function traverseStmt(s : string, t : TreeCursor) : Stmt {
+export function traverseStmt(s : string, t : TreeCursor) : Stmt<any> {
   switch(t.type.name) {
     case "AssignStatement":
       t.firstChild(); // focused on name (the first child)
@@ -243,38 +248,20 @@ export function traverseStmt(s : string, t : TreeCursor) : Stmt {
       }
       t.parent(); // Pop to Body
       
-      var expr2 = null;
-      var body2:Array<Stmt> = null;
-      var body3:Array<Stmt> = null;
+      var body2:Array<Stmt<any>> = null;
       t.nextSibling(); // Focus on elif or else
-      if (s.substring(t.from, t.to) == "elif") {
-        t.nextSibling(); 
-        expr2 = traverseExpr(s, t);
-        if (expr2 == null) {
-          throw new Error("Parse error no expression for if statement");
-        }
-        t.nextSibling(); // Focus on Body
-        t.firstChild(); // Focus on :
-        t.nextSibling(); 
-        body2 = traverseStmts(s, t);
-        if (body2.length == 0){
-          throw new Error("Parse error no statement for if statement");
-        }
-        t.parent(); // Pop to Body
-        t.nextSibling(); // Focus on else
-      }
       if (s.substring(t.from, t.to) == "else") {
         t.nextSibling(); // Focus on Body
         t.firstChild(); // Focus on :
         t.nextSibling();
-        body3 = traverseStmts(s, t);
-        if (body3.length == 0) {
+        body2 = traverseStmts(s, t);
+        if (body2.length == 0) {
           throw new Error("Parse error no statement for if statement");
         }
         t.parent();
       }
       t.parent();
-      return { tag: "logical", expr1: expr1, body1: body1, expr2: expr2, body2: body2, body3: body3 };
+      return { tag: "if", cond: expr1, thn: body1, els: body2 };
 
     case "WhileStatement":
       t.firstChild();
@@ -300,7 +287,8 @@ export function traverseStmt(s : string, t : TreeCursor) : Stmt {
     case "ReturnStatement":
       t.firstChild();  // Focus return keyword
       t.nextSibling(); // Focus expression
-      var value = traverseExpr(s, t);
+      var value:Expr<any> = { tag:"literal", value: { tag: "None", value:null} };
+      if(s.substring(t.from, t.to).length > 0) value = traverseExpr(s, t);
       if (t.nextSibling()) {
         throw new Error("Parse Error too many return values");
       }
@@ -317,18 +305,22 @@ export function traverseStmt(s : string, t : TreeCursor) : Stmt {
   }
 }
 
-
-export function traverseExpr(s : string, t : TreeCursor) : Expr {
+export function traverseExpr(s : string, t : TreeCursor) : Expr<any> {
+  console.log(t.type.name);
   switch(t.type.name) {
     case "Number":
     case "Boolean":
     case "None":
       return { tag: "literal", value: getLiteral(s, t)};
     case "VariableName":
+    case "self":
       return { tag: "id", name: s.substring(t.from, t.to) };
     case "MemberExpression":
       t.firstChild();
-      let obj = traverseExpr(s, t);
+      var obj = traverseExpr(s, t);
+      // if(obj.a.tag !== "class") { // I don't think this error can happen
+      //   throw new Error("Report this as a bug to the compiler developer, this shouldn't happen " + obj.a.tag);
+      // }
       t.nextSibling(); // Focuses .
       t.nextSibling(); // Focuses field name
       const fieldName = s.substring(t.from, t.to);
@@ -383,6 +375,24 @@ export function traverseExpr(s : string, t : TreeCursor) : Expr {
     case "CallExpression":
       t.firstChild(); // Focus name
       var name = s.substring(t.from, t.to);
+      var isMethodCall:boolean = false;
+      if (name.includes(".")) {
+        isMethodCall = true;
+        t.firstChild();
+        // obj
+        obj = traverseExpr(s, t);
+        // .
+        t.nextSibling();
+
+        t.nextSibling();
+        name = s.substring(t.from, t.to);
+        
+        t.parent();
+      } else if(classes.has(name)) {
+        t.parent();
+        return { a : { tag: "class", name: name }, tag: "construct", name: name }
+      }
+      
       t.nextSibling(); // Focus ArgList
       t.firstChild(); // Focus open paren
       var value = [];
@@ -396,7 +406,13 @@ export function traverseExpr(s : string, t : TreeCursor) : Expr {
           value.push(traverseExpr(s, t));
         }
       }
-      var result : Expr = { tag: "call", name, arguments: value};
+      var result : Expr<any>;
+
+      if (isMethodCall) {
+        result = { tag: "methodcall", obj, name, args: value }; 
+        console.log(result);
+      }
+      else result = { tag: "call", name, arguments: value};
       t.parent();
       t.parent();
       return result;
@@ -423,6 +439,17 @@ export function getLiteral(s : string, t : TreeCursor) : Literal {
   }
 }
 
+export function getLiteralType(l : Literal) : Type {
+  switch (l.tag) {
+    case "Bool":
+      return BOOL;
+    case "None":
+      return NONE;
+    case "number":
+      return NUM;
+  }
+}
+
 
 export function getType(s : string, t : TreeCursor) : Type {
   if (t.type.name != "TypeDef") {
@@ -434,12 +461,13 @@ export function getType(s : string, t : TreeCursor) : Type {
   t.parent(); // Pop to TypeDef
   switch (typename) {
     case "int":
-      return { tag: "int" };
+      return NUM;
     case "bool":
-      return { tag: "bool" };
+      return BOOL;
     case "None":
       throw new Error("Parse error near token NONE: None");
     default:
-      throw new Error("Invalid type annotation; there is no class named: " + typename);
+      // It is a class name, and let typecheck to check whether this class exists.
+      return CLASS(typename);
   }
 }

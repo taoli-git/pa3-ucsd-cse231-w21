@@ -2,32 +2,49 @@ import {BasicREPL} from './repl';
 import {emptyEnv, GlobalEnv} from './compiler';
 import {convert} from './runner';
 import { output } from './webpack.config';
+import { BOOL, NONE, NUM } from './utils';
+import { Type } from './ast';
 
 
 function webStart() {
   document.addEventListener("DOMContentLoaded", function() {
+    function stringify(typ: Type, arg: any): string {
+      switch (typ.tag) {
+        case "number":
+          return (arg as number).toString();
+        case "bool":
+          return (arg as boolean) ? "True" : "False";
+        case "none":
+          return "None";
+        case "class":
+          return typ.name;
+      }
+    }
+    function print(typ: Type, arg: any): any {
+      console.log("Logging from WASM: ", arg);
+      const elt = document.createElement("pre");
+      document.getElementById("output").appendChild(elt);
+      arg = convert(arg);
+      if (arg == null){
+        throw new Error("Invalid argument\nExited with error code 1");
+      }
+      elt.innerText = toString(arg);
+      
+      //elt.innerText = stringify(typ, arg);
+      return arg;
+    }
 
     var importObject = {
       imports: {
-        imported_func: (arg : any) => {
-          console.log("Logging from WASM: ", arg);
-          const elt = document.createElement("pre");
-          document.getElementById("output").appendChild(elt);
-          arg = convert(arg);
-          if (arg == null){
-            throw new Error("Invalid argument\nExited with error code 1");
-          }
-          elt.innerText = toString(arg);
-        },
+        print: (arg: any) => print(NUM, arg),
+        print_num: (arg: number) => print(NUM, arg),
+        print_bool: (arg: number) => print(BOOL, arg),
+        print_none: (arg: number) => print(NONE, arg),
+        abs: Math.abs,
+        min: Math.min,
+        max: Math.max,
+        pow: Math.pow,
       },
-
-      nameMap: new Array<string>(),
-    
-      updateNameMap : (env : GlobalEnv) => {
-        env.globals.forEach((pos, name) => {
-          importObject.nameMap[pos] = name;
-        })
-      }
     };
     const env = emptyEnv;
     var repl = new BasicREPL(importObject);

@@ -1,8 +1,9 @@
 import { stringInput } from "lezer-tree";
 import { EnvironmentPlugin } from "webpack";
-import { Func_def, Var_def, Stmt, Expr, Binop, Uniop, Type, Map_bin, Map_type} from "./ast";
+import { Func_def, Var_def, Stmt, Expr, Binop, Uniop, Type, Map_bin} from "./ast";
 import { GlobalType } from "./compiler";
 import { parseProgram } from "./parser";
+import { BOOL, NONE, NUM } from "./utils";
 
 export function tcDef(def: Var_def | Func_def, global: GlobalType, local: Map<string, Type>) : Type {
   switch (def.tag) {
@@ -10,12 +11,15 @@ export function tcDef(def: Var_def | Func_def, global: GlobalType, local: Map<st
       var literal_type = tcExpr({tag:"literal", value: def.literal}, global, local);
       var var_type = def.typed_var.type;
 
-      if (var_type == literal_type) {
-        return null;
+      if (var_type.tag == "class" && literal_type.a == NONE) {
+        return var_type;
+      }
+      else if (var_type == literal_type.a) {
+        return var_type;
       }
       else {
-        throw new Error("Expected type `" + Map_type.get(var_type) 
-        + "`; got type `" + Map_type.get(literal_type) + "`");
+        throw new Error("Expected type `" + var_type.tag
+        + "`; got type `" + literal_type.a.tag + "`");
       }
 
     case "func":
@@ -36,94 +40,32 @@ export function tcDef(def: Var_def | Func_def, global: GlobalType, local: Map<st
       }
       
       // type check all statements
-      var match = true;
-      var hasret : boolean = null;
-      var sig : boolean = false;
-      body.map(s => {var k = tcStmt(s, global, local, rettype);
-                     if (k != null) { sig = true; match = match && k};
-                     if (s.tag == "return") { sig = true; hasret = true}; }); 
-      if (hasret != null) { match = hasret || match; }
-      if (rettype != null) {
-        if (!sig || !match){
-          throw new Error(`All paths in this function/method must have a return statement: ${fname}`);
-        }
-      }        
-                    
-      // if (rettype != type) {
-      //   throw new Error("Expected type `" + Map_type.get(rettype) 
-      //   + "`; got type `" + Map_type.get(type) + "`");
-      // }
-      return null;
+      var hasret : boolean = false;
+      body.map(s => {
+        var k = tcStmt(s, global, local);
+        if (k.a != NONE) { 
+          hasret = true; 
+          if (k.a != rettype) {
+            throw new Error(`All paths in this function/method must have the return type: ${rettype.tag}`)
+          }
+        };
+        if (s.tag == "return") 
+        { 
+          hasret = true;
+          if (k.a != rettype) {
+            throw new Error(`All paths in this function/method must have the return type: ${rettype.tag}`)
+          }
+        }; 
+      }); 
+      if (rettype != NONE && !hasret) {
+        throw new Error(`All paths in this function/method must have a return statement: ${fname}`);
+      }
+      return rettype;
   }
 
 }
 
-// export function tcStmt(stmt: Stmt, global: GlobalType, local: Map<string, Type>, rettype: Type) : boolean {
-//   if (stmt == null) {
-//     return null;
-//   }
-//   switch(stmt.tag) {
-//     case "define": 
-//       var righttype = tcExpr(stmt.value, global, local);
-//       var vartype;
-//       if (local.has(stmt.name)) {
-//         vartype = local.get(stmt.name);
-//       } else if (global.vars.has(stmt.name)) {
-//         vartype = global.vars.get(stmt.name);
-//       }
-//       if (vartype == righttype) {
-//         return null;
-//       } else {
-//         throw new Error("Expected type `" + Map_type.get(vartype) 
-//                         + "`; got type `" + Map_type.get(righttype) + "`");
-//       }
-//     case "logical":      
-//       var expr1_type = tcExpr(stmt.expr1, global, local);
-//       if (expr1_type != Type.bool) {
-//         throw new Error("Condition expression cannot be of type `" + Map_type.get(expr1_type) + "`");
-//       }
-      
-//       var bodytype = stmt.body1.map(s => tcStmt(s, global, local, rettype));
-
-//       if (stmt.expr2 != null) {
-//         var expr2_type = tcExpr(stmt.expr2, global, local);
-//         if (expr2_type != Type.bool) {
-//           throw new Error("Condition expression cannot be of type `" + Map_type.get(expr2_type) + "`");
-//         }
-//       }
-
-//       if (stmt.body2 != null) {
-//         stmt.body2.map(s => tcStmt(s, global, local, rettype));
-//       } 
-//       if (stmt.body3 != null) {
-//         stmt.body3.map(s => tcStmt(s, global, local, rettype));
-//       }
-
-//       return null;
-//     case "while":
-//       var type = tcExpr(stmt.expr, global, local);
-//       if (type != Type.bool) {
-//         throw new Error("Condition expression cannot be of type `" + Map_type.get(type) + "`");
-//       }
-//       var all = stmt.body.map(s => tcStmt(s, global, local, rettype));
-//       return all[all.length - 1];
-//     case "pass":
-//       return null;
-//     case "return":
-//       var type = tcExpr(stmt.value, global, local);
-//       console.log("11111 "+ type);
-//       if (rettype != type) {
-//         throw new Error("Expected type `" + Map_type.get(rettype) 
-//         + "`; got type `" + Map_type.get(type) + "`");
-//       }
-//       return null;
-//     case "expr":
-//       tcExpr(stmt.expr, global, local);
-//       return null;
-//   }
-// }
-
-export function tcStmt(stmt: Stmt, global: GlobalType, local: Map<string, Type>, rettype: Type) : boolean {
+export function tcStmt(stmt: Stmt<any>, global: GlobalType, local: Map<string, Type>) : Stmt<Type> {
   if (stmt == null) {
     return null;
   }
@@ -136,129 +78,68 @@ export function tcStmt(stmt: Stmt, global: GlobalType, local: Map<string, Type>,
       } else if (global.vars.has(stmt.name)) {
         vartype = global.vars.get(stmt.name);
       }
-      if (vartype == righttype) {
-        return null;
+      if (vartype == righttype.a) {
+        return { a: NONE, tag:"assign", name:stmt.name, value: righttype };
       } else {
-        throw new Error("Expected type `" + Map_type.get(vartype) 
-                        + "`; got type `" + Map_type.get(righttype) + "`");
+        throw new Error("Expected type `" + vartype.tag
+                        + "`; got type `" + righttype.tag + "`");
       }
-    case "logical":      
-      var expr1_type = tcExpr(stmt.expr1, global, local);
-      if (expr1_type.tag != "bool") {
-        throw new Error("Condition expression cannot be of type `" + Map_type.get(expr1_type) + "`");
-      }
-      
-      var ret : boolean = null;
-      var hasret1 : boolean = null;
-      var retbody1 : boolean = true;
-      var hasret2 : boolean = null;
-      var retbody2 : boolean = true;
-      var hasret3 : boolean = null; 
-      var retbody3 : boolean = true; 
-      for (var s of stmt.body1) {
-        var t = tcStmt(s, global, local, rettype);
-        if (t != null){
-          if (hasret1 == null) {
-            hasret1 = false;
-          }
-          if (s.tag == "return") {
-            hasret1 = true;
-          }
-          retbody1 = retbody1 && t; 
-        }
-      }
-      if (hasret1 != null) {
-        hasret1 = hasret1 || retbody1;
-      }
- 
-      if (stmt.expr2 != null) {
-        var expr2_type = tcExpr(stmt.expr2, global, local);
-        if (expr2_type.tag != "bool") {
-          throw new Error("Condition expression cannot be of type `" + Map_type.get(expr2_type) + "`");
-        }
-      }
-      
-      console.log(stmt.body2)
-      console.log(stmt.body3)
-      if (stmt.body2 != null) {
-        for (var s of stmt.body2) {
-          var t = tcStmt(s, global, local, rettype);
-          if (t != null){
-            if (hasret2 == null) {
-              hasret2 = false;
-            }
-            if (s.tag == "return") {
-              hasret2 = true;
-            }
-            retbody2 = retbody2 && t; 
-          }
-        }
-        if (hasret2 != null) {
-          hasret2 = hasret2 || retbody2;
-        }
-      } else {
-        hasret2 = hasret1;
+    case "if":      
+      var condType = tcExpr(stmt.cond, global, local);
+      if (condType.a.tag != "bool") {
+        throw new Error("Condition expression cannot be of type `" + condType.a.tag + "`");
       }
 
-      if (stmt.body3 != null) {
-        for (var s of stmt.body3) {
-          var t = tcStmt(s, global, local, rettype);
-          if (t != null){
-            if (hasret3 == null) {
-              hasret3 = false;
-            }
-            if (s.tag == "return") {
-              hasret3 = true;
-            }
-            retbody3 = retbody3 && t; 
-          }
-        }
-        if (hasret3 != null) {
-          hasret3 = hasret3 || retbody3;
-        } 
-      } 
-      
-      console.log(`1  ${hasret1} , 2   ${hasret2}    ,3   ${hasret3} `)
-      
-      if (hasret1 == hasret2 && hasret2 == hasret3) {
-        if (hasret1 == null) {
-          return null;
-        }
-        return hasret1;
-      }
-      return false;
+      var rt1:Type = null;
+      var typedbody1:Array<Stmt<Type>> = [];
+      // handle if statement
+      stmt.thn.forEach(element => {
+        var tp = tcStmt(element, global, local);
+        typedbody1.push(tp);
+        if (rt1!=null && tp.a!=rt1) throw new Error("Cannot return different types within on If Block")
+        if (rt1 == null) rt1 = tp.a;
+      });
 
+      var rt2:Type = null;
+      var typedbody2:Array<Stmt<Type>> = [];
+      stmt.els.forEach(element => {
+        var tp = tcStmt(element, global, local);
+        typedbody2.push(tp);
+        if (rt2!=null && tp.a!=rt2) throw new Error("Cannot return different types within on If Block")
+        if (rt2 == null) rt2 = tp.a;
+      });
+
+      if (rt1 == null) rt1 = NONE;
+      if (rt2 == null) rt2 = NONE;
+      if (rt1 != rt2) {
+        throw new Error("Cannot return different types within on If Block");
+      }
+      return { a: rt1, tag: "if", cond: condType, thn: typedbody1, els: typedbody2 };
     case "while":
+      // There is no while loop in this pa
       var type = tcExpr(stmt.expr, global, local);
-      if (type.tag != "bool") {
-        throw new Error("Condition expression cannot be of type `" + Map_type.get(type) + "`");
+      if (type.a.tag != "bool") {
+        throw new Error("Condition expression cannot be of type `" + type.tag + "`");
       }
-      var hasret:boolean = null;
-      stmt.body.map(s => {var t = tcStmt(s, global, local, rettype);
-                          if (t != null) {hasret = true}});
-      // return all[all.length - 1];
-      if (hasret == null) {
-        return null;
-      }
-      return false;
+      var ret:Type = NONE;
+      var typedBody:Array<Stmt<Type>> = [];
+      stmt.body.map(s => {var t = tcStmt(s, global, local);
+                          typedBody.push(t);
+                          if (s.tag == "return") {ret = t.a}});
+      return { a:ret, tag: "while", expr: type, body: typedBody };
     case "pass":
-      return null;
+      return { a:NONE, tag:"pass" };
     case "return":
       var type = tcExpr(stmt.value, global, local);
-      console.log("11111 "+ type.tag);
-      if (rettype != type) {
-        throw new Error("Expected type `" + rettype.tag 
-        + "`; got type `" + type.tag + "`");
-      }
-      return true;
+      return { a: type.a, tag:"return", value: type };
     case "expr":
-      tcExpr(stmt.expr, global, local);
-      return null;
+      var tE = tcExpr(stmt.expr, global, local);
+      return { a: NONE, tag: "expr", expr: tE };
   }
 }
 
 
-export function tcExpr(expr: Expr , global: GlobalType , local: Map<string, Type>) : Type {
+export function tcExpr(expr: Expr<any> , global: GlobalType , local: Map<string, Type>) : Expr<Type> {
   console.log( local);
 
   if (expr == null) {
@@ -269,22 +150,22 @@ export function tcExpr(expr: Expr , global: GlobalType , local: Map<string, Type
       var literal = expr.value;
       switch(literal.tag){
         case "None":
-          return { tag: "none" }
+          return { a:NONE, tag: "literal", value:literal };
         case "Bool":
-          return { tag: "bool" }
+          return { a:BOOL, tag: "literal", value:literal };
         case "number":
-          return { tag: "int" }
+          return { a:NUM, tag: "literal", value:literal };
       }
     case "id":
-      var type : Type = null;
+      var type : Type = NONE;
       if (local.has(expr.name)){
         type = local.get(expr.name);
       } else if (global.vars.has(expr.name)){
         type = global.vars.get(expr.name);
       }
-      return type;
+      return { a:type, tag:"id", name:expr.name };
     case "uniop":
-      var type : Type = tcExpr(expr.right, global, local);
+      var type : Type = tcExpr(expr.right, global, local).a;
       switch (expr.op){
         case Uniop.Not:
           if (type.tag != "bool") {
@@ -292,53 +173,63 @@ export function tcExpr(expr: Expr , global: GlobalType , local: Map<string, Type
           }
           break;
         case Uniop.Negate:
-          if (type.tag != "int") {
+          if (type.tag != "number") {
             throw new Error("Cannot apply operator `-` on type `" + type.tag + "`");
           }
           break;
       }
-      return type;
+      return { a:type, tag:"uniop", op:expr.op, right:expr.right };
     case "binop":
-      var lefttype = tcExpr(expr.left, global, local);
-      var righttype = tcExpr(expr.right, global, local);
-      return checkOp(expr.op, lefttype, righttype);
+      var lefttype = tcExpr(expr.left, global, local).a;
+      var righttype = tcExpr(expr.right, global, local).a;
+      var type = checkOp(expr.op, lefttype, righttype);
+      return { a:type, tag:"binop", op:expr.op, left:expr.left, right:expr.right }
     case "paren":
-      return tcExpr(expr.middle, global, local);
-    case "call":
-      return checkArgs(expr, global, local);
-  }
-}
-
-function checkArgs(expr: Expr, global: GlobalType, local: Map<string, Type>) : Type{
-  if (expr.tag == "call"){
-    var fname = expr.name;
-    if (fname == "print") {
-      tcExpr(expr.arguments[0], global, local)
-      return null;
-    }
-    if (!global.method_param.has(fname)) {
-      throw new Error(`Not a function or class: ${fname}`);
-    }
-    var args = expr.arguments;
-    var arg_types = args.map( s => tcExpr(s, global, local));
-    var params = global.method_param.get(fname);
-    if (params.length != args.length) {
-      throw new Error(`Expected ${params.length} arguments; got ${args.length}`);
-    }
-    else {
-      var len = args.length;
-      for (var i = 0; i < len; i++) {
-        if (arg_types[i] != params[i]){
-          throw new Error("Expected type `" + Map_type.get(params[i]) + "`; got type `"
-                         + Map_type.get(arg_types[i]) + "` in parameter " + i);
-        }
+      var tE = tcExpr(expr.middle, global, local);
+      return { a:tE.a, tag:"paren", middle: tE }
+    case "construct":
+      return { a: { tag:"class", name:expr.name}, tag:"construct", name:expr.name }
+    case "lookup":
+      var objstmts = tcExpr(expr.obj, global, local);
+      var objtype = objstmts.a;
+      if(objtype.tag !== "class") { // I don't think this error can happen
+        throw new Error("Report this as a bug to the compiler developer, this shouldn't happen " + objtype.tag);
       }
-    }
-    return global.func_ret.get(fname);
+      var className = objtype.name;
+      return { a: global.fields.get(className).get(expr.name), tag:"lookup", obj:objstmts, name:expr.name }
+    case "methodcall":
+      var objstmts = tcExpr(expr.obj, global, local);
+      var objtype = objstmts.a;
+      if(objtype.tag !== "class") { // I don't think this error can happen
+        throw new Error("Report this as a bug to the compiler developer, this shouldn't happen " + objtype.tag);
+      }
+
+      var className = objtype.name;
+      if (!global.method_param.has(className) || !global.method_param.get(className).has(expr.name)) {
+        throw new Error("Undefined method call!")
+      }
+
+      var defTypes = global.method_param.get(className).get(expr.name);
+      if (expr.args.length != defTypes.length-1) {
+        throw new Error("Method call has different arguments number than defined.")
+      }
+
+      var typedArgs:Array<Expr<Type>> = []
+      for (let index = 0; index < expr.args.length; index++) {
+        var tE = tcExpr(expr.args[index], global, local);
+        if (tE.a != defTypes[index+1]) {
+          throw new Error("Method call has different arguments types than defined.")
+        }
+        typedArgs.push(tE);
+      }
+      return { a:global.method_ret.get(className).get(expr.name), tag:"methodcall", obj:objstmts, name:expr.name, args:typedArgs};
+    case "call":
+      // There is no call in this pa.
+      return { a:NONE, tag:"call", name:expr.name, arguments:expr.arguments };
   }
 }
 
-function checkOp(op: Binop, left: Type, right: Type, global: GlobalType) : Type {
+function checkOp(op: Binop, left: Type, right: Type) : Type {
   var op_str = getKey(Map_bin, op);
   switch(op){
     case Binop.Plus:
@@ -346,8 +237,8 @@ function checkOp(op: Binop, left: Type, right: Type, global: GlobalType) : Type 
     case Binop.Multiply:
     case Binop.Divide:
     case Binop.Mod:
-      if (left == right && left.tag == "int"){
-        return { tag: "int" };
+      if (left == right && left.tag == "number"){
+        return { tag: "number" };
       }
       else {
         throw new Error("Cannot apply operator `"
@@ -359,7 +250,7 @@ function checkOp(op: Binop, left: Type, right: Type, global: GlobalType) : Type 
     case Binop.GE:
     case Binop.LT:
     case Binop.GT:
-      if (left == right && left.tag == "int") {
+      if (left == right && left.tag == "number") {
         return { tag: "bool" };
       }
       else {
@@ -370,7 +261,7 @@ function checkOp(op: Binop, left: Type, right: Type, global: GlobalType) : Type 
       }
     case Binop.Equal:
     case Binop.Unequal:
-      if (left == right && (left.tag == "int" || left.tag == "bool")) {
+      if (left == right && (left.tag == "number" || left.tag == "bool")) {
         return { tag: "bool" };
       }
       else {
@@ -380,12 +271,13 @@ function checkOp(op: Binop, left: Type, right: Type, global: GlobalType) : Type 
         + right.tag + "`");
       }
     case Binop.Is:
-      if (left.tag == "class" && right.tag == "class")
-      {
+      // if (left.tag == "class" && right.tag == "class")
+      // {
         
-      }
-      else if (left.tag != "int" && left.tag != "bool" 
-        && right.tag != "int" && right.tag != "bool" ){
+      // }
+      // else 
+      if (left.tag != "number" && left.tag != "bool" 
+        && right.tag != "number" && right.tag != "bool" ){
           return { tag: "bool" };
       }
       else {

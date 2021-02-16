@@ -1,6 +1,6 @@
 import { stringInput } from "lezer-tree";
-import { Func_def, Var_def, Stmt, Expr, Binop, Uniop, Type, Typed_var, Class_def } from "./ast";
-import { parseProgram } from "./parser";
+import { Func_def, Var_def, Stmt, Expr, Binop, Uniop, Type, Typed_var, Class_def, Literal } from "./ast";
+import { getLiteralType, parseProgram } from "./parser";
 import { tcDef, tcExpr, tcStmt } from "./typecheck";
 
 // https://learnxinyminutes.com/docs/wasm/
@@ -11,8 +11,12 @@ const none_off = BigInt.asIntN(64, 1n << 41n);
 // Numbers are offsets into global memory
 export type GlobalEnv = {
   globals: Map<string, number>;
-  classes: Map<string, Map<string, number>>;
-  types: GlobalType
+  classes: Map<string, Map<string, number>>; // variables relative order in class
+  default: Map<string, Map<string, Literal>>;
+  methods: Map<string, Map<string, number>>; // mathods relative order in class
+  types: GlobalType;
+  tableIndex: Map<string, number>;
+  table: Array<string>;
   offset: number;
 }
 
@@ -36,6 +40,10 @@ const Global_type: Map<string, Type> = new Map();
 export function augmentEnv(env: GlobalEnv, defs: Array<Var_def | Class_def>) : GlobalEnv {
   const newEnv = new Map(env.globals);
   const newClasses = new Map(env.classes);
+  const newDefault = new Map(env.default);
+  const newMethods = new Map(env.methods);
+  const newTableIndex = new Map(env.tableIndex);
+  const newTable = env.table;
   var newOffset = env.offset;
   var newTypes:GlobalType = {
     method_param: new Map(env.types.method_param),
@@ -63,15 +71,30 @@ export function augmentEnv(env: GlobalEnv, defs: Array<Var_def | Class_def>) : G
           }
 
           const classDict = new Map();
+          const defaultValue = new Map();
           newTypes.fields.set(name, new Map());
-          newTypes.method_param.set(name, new Map());
           for (let index = 0; index < s.fields.length; index++) {
             var vi = s.fields[index].typed_var;
             classDict.set(vi.name, index);
+            defaultValue.set(vi.name, s.fields[index].literal);
             newTypes.fields.get(name).set(vi.name, vi.type);
           }
           newClasses.set(name, classDict);
+          newDefault.set(name, defaultValue);
           
+          // set order for each method within class definition
+          const methodDict = new Map();
+          for (let index = 0; index < s.methods.length; index++) {
+            var mi = s.methods[index];
+            methodDict.set(mi.name, index);
+            var funcName = name + "$" + mi.name;
+            newTableIndex.set(funcName, newTable.length);
+            newTable.push(funcName);
+          }
+          newMethods.set(name, methodDict);
+
+          newTypes.method_param.set(name, new Map());
+          newTypes.method_ret.set(name, new Map());
           s.methods.forEach(m => {
             newTypes.method_param.get(name).set(m.name, []);
             newTypes.method_ret.get(name).set(m.name, m.type);
@@ -85,6 +108,10 @@ export function augmentEnv(env: GlobalEnv, defs: Array<Var_def | Class_def>) : G
   return {
     globals: newEnv,
     classes: newClasses,
+    default: newDefault,
+    methods: newMethods,
+    tableIndex: newTableIndex,
+    table: newTable,
     types: newTypes,
     offset: newOffset
   }  
@@ -103,6 +130,7 @@ export function compile(source: string, env: GlobalEnv) : CompileResult {
   console.log(ast_defs);
   console.log(ast_stmts);
   const withDefines = augmentEnv(env, ast_defs);
+  // do typecheck
 
   const localDefines = [`(local $$None i64) (i64.const ` + none_off + ") (local.set $$None)"];
   // func and var defines
@@ -112,6 +140,11 @@ export function compile(source: string, env: GlobalEnv) : CompileResult {
     //tcDef(def, globalType, new Map());
     if (def.tag == "var"){
       defGroups.push(codeGenDef(def, withDefines, new Set()));
+      defGroups.push([
+        `(i32.const 0)`,             // Address for our upcoming store instruction
+        `(i32.load (i32.const 0))`,  // Load the dynamic heap head offset
+        `(i32.add (i32.const 8))`,   // Move heap head beyond the two words we just created for fields
+        `(i32.store)`]);
     }
     else if (def.tag == "class"){
       def.methods.forEach(m => {
@@ -131,6 +164,11 @@ export function compile(source: string, env: GlobalEnv) : CompileResult {
   const commandGroups = ast_stmts.map((stmt) => codeGenStmt(stmt, withDefines, new Set()));
   
   var commands = [].concat.apply([], localDefines);
+
+  commands = commands.concat([      
+    `(i32.const 0)
+    (i32.const 4)
+    (i32.store)`]);
 
   commands = [].concat.apply(commands, defGroups);
 
@@ -162,7 +200,7 @@ function codeGenDef(def: Var_def | Func_def, env: GlobalEnv, local: Set<string> 
         return [`(local.set $${name} ${valStmts} )`];
       } 
       else {
-        globalType.vars.set(name, def.typed_var.type);
+        env.types.vars.set(name, def.typed_var.type);
         const locationToStore = [`(i32.const ${envLookup(env, name)}) ;; ${name}`];
         return locationToStore.concat(valStmts).concat([`(i64.store)`]);
       }
@@ -214,7 +252,7 @@ function codeGenDef(def: Var_def | Func_def, env: GlobalEnv, local: Set<string> 
         rettype = `(result i64)`;
       }
 
-      const funcName = def.class + "::" + def.name;
+      const funcName = def.class + "$" + def.name;
       var result = `(func $${funcName} ${params} ${rettype} 
          \n${localDefines} 
          \n(local.set $$None (i64.const ${none_off}))\n ${localAssigns}
@@ -225,7 +263,7 @@ function codeGenDef(def: Var_def | Func_def, env: GlobalEnv, local: Set<string> 
 }
 
 
-function codeGenStmt(stmt: Stmt, env: GlobalEnv, local: Set<string>) : Array<string> {
+function codeGenStmt(stmt: Stmt<Type>, env: GlobalEnv, local: Set<string>) : Array<string> {
   console.log("stmt" + local);
   switch(stmt.tag) {
     case "assign":
@@ -238,35 +276,22 @@ function codeGenStmt(stmt: Stmt, env: GlobalEnv, local: Set<string>) : Array<str
         var valStmts = codeGenExpr(stmt.value, env, local);
         return locationToStore.concat(valStmts).concat([`(i64.store)`]);
       }
-    case "logical":
-      var expr1 = codeGenExpr(stmt.expr1, env, local);
+    case "if":
+      var expr1 = codeGenExpr(stmt.cond, env, local);
       var result = [`(if (i32.wrap_i64 `].concat(expr1, [`)`]);
       var body1 = [``];
-      for (var body of stmt.body1) {
+      for (var body of stmt.thn) {
         body1 = body1.concat(codeGenStmt(body, env, local));
       }
       result = result.concat([`(then `], body1, [`)`]);
-      var expr2;
       var body2 = [``];
       var sup = [``];
-      if (stmt.expr2 != null) {
-        expr2 = codeGenExpr(stmt.expr2, env, local);
-        result = result.concat([`(else (if (i32.wrap_i64 `], expr2, [`)`]);
-        if (stmt.body2 != null) {
-          for (var body of stmt.body2) {
-            body2 = body2.concat(codeGenStmt(body, env, local));
-          }
-        }
-        result = result.concat([`(then `], body2, [` )`]);
-        sup = [ `) )`];
-      }
-      var body3 = [``];
-      if (stmt.body3 != null) {
-        for (var body of stmt.body3) {
-          body3 = body3.concat(codeGenStmt(body, env, local));
+      if (stmt.els != null) {
+        for (var body of stmt.els) {
+          body2 = body2.concat(codeGenStmt(body, env, local));
         }
       }
-      result = result.concat([`(else `], body3, sup, [`))`]);
+      result = result.concat([`(else `], body2, sup, [`))`]);
       console.log(result);
       return result;
     case "while":
@@ -288,7 +313,7 @@ function codeGenStmt(stmt: Stmt, env: GlobalEnv, local: Set<string>) : Array<str
         var name = stmt.expr.name; 
         if (env.types.method_ret.get(name) == null){
           return result;
-        }
+        }``
       }
       result.push("(local.set $$None)");
       return result;
@@ -300,7 +325,7 @@ function codeGenStmt(stmt: Stmt, env: GlobalEnv, local: Set<string>) : Array<str
   }
 }
 
-function codeGenExpr(expr : Expr, env: GlobalEnv, local: Set<string>) : Array<string> {
+function codeGenExpr(expr : Expr<Type>, env: GlobalEnv, local: Set<string>) : Array<string> {
   if (expr == null) { return [""];}
   // var type = tcExpr(expr, globalType, new Map());
   switch(expr.tag) {
@@ -326,6 +351,52 @@ function codeGenExpr(expr : Expr, env: GlobalEnv, local: Set<string>) : Array<st
       else{
         return [`(i32.const ${envLookup(env, expr.name)})`, `(i64.load )`];
       }
+    case "lookup":
+      console.log("Looking up ", expr, env);
+      let objstmts = codeGenExpr(expr.obj, env, local);
+      let objtype = expr.obj.a;
+      if(objtype.tag !== "class") { // I don't think this error can happen
+        throw new Error("Report this as a bug to the compiler developer, this shouldn't happen " + objtype.tag);
+      }
+      let className = objtype.name;
+      let offset = env.classes.get(className).get(expr.name);
+      return [
+        ...objstmts,
+        `(i32.add (i32.const ${offset * 8}))`,
+        `(i64.load)`
+      ];
+    case "construct":
+      // each time update obj and globals to record the offset for this obj
+      var ret:Array<string> = [];
+      var var_index = env.classes.get(expr.name);
+      var_index.forEach((value, key) => {
+        ret.push("(i32.load (i32.const 0))");
+        ret.push(`(i32.add (i32.const ${value * 8}))`)
+        var dfval = env.default.get(expr.name).get(key);
+        var dfexpr:Expr<Type> = { a: getLiteralType(dfval), tag: "literal", value: dfval }
+        ret = ret.concat(codeGenExpr(dfexpr, env, local));
+        ret.push("(i64.store)");
+      })
+      env.offset += var_index.size;
+      return ret.concat([
+        `(i32.const 0)`,             // Address for our upcoming store instruction
+        `(i32.load (i32.const 0))`,  // Load the dynamic heap head offset
+        `(i32.add (i32.const ${var_index.size * 8}))`,   // Move heap head beyond the two words we just created for fields
+        `(i32.store)`,               // Save the new heap offset
+        `(i32.load (i32.const 0))`,  // Reload the heap head ptr
+        `(i32.sub (i32.const ${var_index.size * 8}))`    // Subtract offset to get address for the object
+      ]);
+    case "methodcall":
+      var argStmts =  codeGenExpr(expr.obj, env, local);
+      for (var arg of expr.args) {
+        argStmts = argStmts.concat(codeGenExpr(arg, env, local));
+      }
+      var type = expr.obj.a;
+      if(type.tag !== "class") { // I don't think this error can happen
+        throw new Error("Report this as a bug to the compiler developer, this shouldn't happen " + objtype.tag);
+      }
+      var funcName = type.name + "$" + expr.name;
+      return argStmts.concat([`(call_indirect (type $return_i64) (i32.const ${env.tableIndex.get(funcName)}))`]);
     case "uniop":
       return codeGenUniOp(expr.op, expr.right, env, local);
     case "binop":
@@ -342,7 +413,7 @@ function codeGenExpr(expr : Expr, env: GlobalEnv, local: Set<string>) : Array<st
 }
 
 
-function codeGenUniOp(op: Uniop, right: Expr, env: GlobalEnv, local: Set<string>): Array<string> {
+function codeGenUniOp(op: Uniop, right: Expr<Type>, env: GlobalEnv, local: Set<string>): Array<string> {
   var rightStmts = codeGenExpr(right, env, local);
   var left;
   switch (op) {
@@ -355,7 +426,7 @@ function codeGenUniOp(op: Uniop, right: Expr, env: GlobalEnv, local: Set<string>
   }
 }
 
-function codeGenBinOp(op: Binop, left: Expr, right: Expr, env: GlobalEnv, local: Set<string> ): Array<string> {
+function codeGenBinOp(op: Binop, left: Expr<Type>, right: Expr<Type>, env: GlobalEnv, local: Set<string> ): Array<string> {
   var leftStmts = codeGenExpr(left, env, local);
   var rightStmts = codeGenExpr(right, env, local);
   switch (op) {
@@ -377,9 +448,9 @@ function codeGenBinOp(op: Binop, left: Expr, right: Expr, env: GlobalEnv, local:
       return result;
       // return leftStmts.concat(rightStmts.concat([`(i64.div_s )`]));
     case Binop.Mod:
-      var expr:Expr = {tag: "binop", op: Binop.Minus, left: left, right: 
-                      {tag: "binop", op: Binop.Multiply, left: right, right:
-                      {tag: "binop", op: Binop.Divide, left: left, right: right}}};
+      var expr:Expr<Type> = { a: { tag: "number"}, tag: "binop", op: Binop.Minus, left: left, right: 
+                      {a: { tag: "number"}, tag: "binop", op: Binop.Multiply, left: right, right:
+                      {a: { tag: "number"}, tag: "binop", op: Binop.Divide, left: left, right: right}}};
       var result = codeGenExpr(expr, env, local);
       return result;
       // return leftStmts.concat(rightStmts.concat([`(i64.rem_s )`]));
