@@ -81,7 +81,7 @@ export function traverseClassDefs(s : string, t : TreeCursor) : Class_def<any> {
       }
     } 
     else {
-      throw new Error("Unsupported expression within ClassDefinition. with type" + t.type.name + " and source is " + s);
+      throw new Error("Unsupported expression within ClassDefinition. with type");
     }
   } 
   t.parent();
