@@ -57,11 +57,11 @@ export function traverseClassDefs(s : string, t : TreeCursor) : Class_def<any> {
   t.firstChild();
   t.nextSibling(); // Focus on class name
   const className = s.substring(t.from, t.to);
-  classes.add(className);
+  classes.add(className); 
+  t.nextSibling(); // Focus on (Object)
   t.nextSibling(); // Focus on body
   t.firstChild();  // Focus colon
 
-  
   while(t.nextSibling()) {
     if (t.type.name == "FunctionDefinition") {
       funcDefs.push(traverseFuncDef(className, s, t));

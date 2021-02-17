@@ -370,7 +370,10 @@ function codeGenExpr(expr : Expr<Type>, env: GlobalEnv, local: Set<string>) : Ar
         return [`(local.get $${expr.name})`];
       }
       else{
-        return [`(i32.const ${envLookup(env, expr.name)})`, `(i32.load )`];
+        if (expr.a.tag == "class") {
+          return [`(i32.const ${envLookup(env, expr.name)})`];
+        }
+        else return [`(i32.const ${envLookup(env, expr.name)})`, `(i32.load )`];
       }
     case "lookup":
       console.log("Looking up ", expr, env);
