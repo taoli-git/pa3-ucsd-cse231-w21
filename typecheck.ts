@@ -246,7 +246,7 @@ export function tcStmt(stmt: Stmt<any>, global: GlobalType, local: Map<string, T
       }
     case "expr":
       var tE = tcExpr(stmt.expr, global, local);
-      return { a: NONE, tag: "expr", expr: tE };
+      return { a: tE.a, tag: "expr", expr: tE };
   }
 }
 

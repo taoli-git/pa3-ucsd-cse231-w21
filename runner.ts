@@ -23,7 +23,7 @@ if(typeof process !== "undefined") {
   };
 }
 
-export async function run(source : string, config: any) : Promise<[Value, compiler.GlobalEnv]> {
+export async function run(source : string, config: any) : Promise<[number, compiler.GlobalEnv]> {
   const wabtInterface = await wabt();
   const [parsed_defs, parsed_stmts] = parseProgram(source);
   var returnType = "";
@@ -69,5 +69,5 @@ export async function run(source : string, config: any) : Promise<[Value, compil
   var asBinary = myModule.toBinary({});
   var wasmModule = await WebAssembly.instantiate(asBinary.buffer, importObject);
   const result = (wasmModule.instance.exports.exported_func as any)();
-  return [PyValue(NUM, result), compiled.newEnv];
+  return [result, compiled.newEnv];
 }

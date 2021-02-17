@@ -2,7 +2,7 @@ import {run} from "./runner";
 import { parseProgram } from "./parser";
 import { augmentEnv, GlobalEnv } from "./compiler";
 import { Value, Type } from "./ast";
-import { NONE } from "./utils";
+import { NONE, PyValue } from "./utils";
 import { tcStmts } from "./typecheck";
 
 interface REPL {
@@ -39,7 +39,9 @@ export class BasicREPL {
   async run(source : string) : Promise<Value> {
     const [result, newEnv] = await run(source, {importObject: this.importObject, env: this.currentEnv});
     this.currentEnv = newEnv;
-    return result;
+    var tp = await this.tc(source);
+    console.log(tp);
+    return PyValue(tp, result);
   }
   async tc(source : string) : Promise<Type> { 
     const [ast_defs, ast_stmts] = parseProgram(source);

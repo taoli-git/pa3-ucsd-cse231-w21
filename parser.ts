@@ -1,5 +1,6 @@
 import {parser} from "lezer-python";
 import {Tree, TreeCursor} from "lezer-tree";
+import { sources } from "webpack";
 import {Var_def, Func_def, Typed_var, Expr, Stmt, Type, Literal, Map_uni, Map_bin, Class_def} from "./ast";
 import { BOOL, CLASS, NONE, NUM } from "./utils";
 
@@ -80,7 +81,7 @@ export function traverseClassDefs(s : string, t : TreeCursor) : Class_def<any> {
       }
     } 
     else {
-      throw new Error("Unsupported expression within ClassDefinition.");
+      throw new Error("Unsupported expression within ClassDefinition. with type" + t.type.name + " and source is " + s);
     }
   } 
   t.parent();
