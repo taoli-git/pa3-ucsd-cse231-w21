@@ -17,7 +17,7 @@ export type Func_body<A> =
   { var_def: Array<Var_def>, body: Array<Stmt<A>> }
 
 export type Stmt<A> = 
-    { a?: A, tag: "assign", name: Expr<A> , value: Expr<A> }
+    { a?: A, tag: "assign", left: Expr<A> , value: Expr<A> }
   | { a?: A, tag: "if", cond: Expr<A>, thn: Array<Stmt<A>>, els: Array<Stmt<A>> }
   | { a?: A, tag: "while", expr: Expr<A>, body: Array<Stmt<A>> }
   | { a?: A, tag: "pass" }

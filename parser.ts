@@ -231,7 +231,7 @@ export function traverseStmt(s : string, t : TreeCursor) : Stmt<any> {
 
       var value = traverseExpr(s, t);
       t.parent();
-      return { tag: "assign", name, value };
+      return { tag: "assign", left: name, value: value };
     
     case "IfStatement":
       t.firstChild(); // Focus on if

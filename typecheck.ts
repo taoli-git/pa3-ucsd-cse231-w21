@@ -177,14 +177,14 @@ export function tcStmt(stmt: Stmt<any>, global: GlobalType, local: Map<string, T
   switch(stmt.tag) {
     case "assign": 
       var righttype = tcExpr(stmt.value, global, local);
-      var vartype = tcExpr(stmt.name, global, local);
+      var vartype = tcExpr(stmt.left, global, local);
       // if (local.has(stmt.name)) {
       //   vartype = local.get(stmt.name);
       // } else if (global.vars.has(stmt.name)) {
       //   vartype = global.vars.get(stmt.name);
       // }
       if (equalTypes(vartype.a, righttype.a)) {
-        return { a: NONE, tag:"assign", name: vartype, value: righttype };
+        return { a: NONE, tag:"assign", left: vartype, value: righttype };
       } else {
         throw new Error("Expected type `" + vartype.a.tag
                         + "`; got type `" + righttype.a.tag + "`");

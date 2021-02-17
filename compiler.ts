@@ -268,18 +268,36 @@ function codeGenDef(def: Var_def | Func_def<Type>, env: GlobalEnv, local: Set<st
 function codeGenStmt(stmt: Stmt<Type>, env: GlobalEnv, local: Set<string>) : Array<string> {
   switch(stmt.tag) {
     case "assign":
-      const left = codeGenExpr(stmt.name, env, local);
-      var valStmts = codeGenExpr(stmt.value, env, local);
-      return left.concat(valStmts).concat([`(i32.store)`]);
-      // if (local.has(stmt.name)) {
-      //   var valStmts = codeGenExpr(stmt.value, env, local);
-      //   return valStmts.concat([`(local.set $${stmt.name})`]);
-      // } 
-      // else {
-      //   const locationToStore = [`(i32.const ${envLookup(env, stmt.name)}) ;; ${stmt.name}`];
-      //   var valStmts = codeGenExpr(stmt.value, env, local);
-      //   return locationToStore.concat(valStmts).concat([`(i32.store)`]);
-      // }
+      if(stmt.left.tag == "id") {
+        if (local.has(stmt.left.name)) {
+          var valStmts = codeGenExpr(stmt.value, env, local);
+          return valStmts.concat([`(local.set $${stmt.left.name})`]);
+        } 
+        else {
+          const locationToStore = [`(i32.const ${envLookup(env, stmt.left.name)}) ;; ${stmt.left.name}`];
+          var valStmts = codeGenExpr(stmt.value, env, local);
+          return locationToStore.concat(valStmts).concat([`(i32.store)`]);
+        }
+      } else if (stmt.left.tag == "lookup") {
+        let objstmts = codeGenExpr(stmt.left.obj, env, local);
+        let objtype = stmt.left.obj.a;
+        if(objtype.tag !== "class") { // I don't think this error can happen
+          throw new Error("Report this as a bug to the compiler developer, this shouldn't happen " + objtype.tag);
+        }
+        let className = objtype.name;
+        let offset = env.classes.get(className).get(stmt.left.name);
+        const locationToStore = [
+          ...objstmts,
+          `(i32.add (i32.const ${offset * 4}))`
+        ];
+        var valStmts = codeGenExpr(stmt.value, env, local);
+        return locationToStore.concat(valStmts).concat([`(i32.store)`]);
+      }
+      else {
+        const left = codeGenExpr(stmt.left, env, local);
+        var valStmts = codeGenExpr(stmt.value, env, local);
+        return left.concat(valStmts).concat([`(i32.store)`]);
+      }
     case "if":
       var expr1 = codeGenExpr(stmt.cond, env, local);
       var result = [`(if `].concat(expr1);
@@ -370,10 +388,7 @@ function codeGenExpr(expr : Expr<Type>, env: GlobalEnv, local: Set<string>) : Ar
         return [`(local.get $${expr.name})`];
       }
       else{
-        if (expr.a.tag == "class") {
-          return [`(i32.const ${envLookup(env, expr.name)})`];
-        }
-        else return [`(i32.const ${envLookup(env, expr.name)})`, `(i32.load )`];
+        return [`(i32.const ${envLookup(env, expr.name)})`, `(i32.load)`];
       }
     case "lookup":
       console.log("Looking up ", expr, env);
